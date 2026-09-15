@@ -1,34 +1,32 @@
-import { afterAll } from 'vitest'
+import { beforeEach, vi } from 'vitest'
 
 /**
- * Red de seguridad antes de correr una sola prueba.
+ * Intercepta el cliente Prisma antes de que cualquier repositorio lo importe.
  *
- * Esta suite ya no simula la base de datos: usa una Postgres real y cada
- * prueba borra y vuelve a llenar las tablas (ver helpers/db.ts). Si por
- * error DATABASE_URL apuntara a la base compartida del equipo en vez de a
- * una base de pruebas dedicada, ese borrado se llevaría por delante los
- * datos de todos los demás. Por eso, si la URL no contiene la palabra
- * "test", se corta la ejecución antes de tocar nada.
+ * La fábrica es asíncrona a propósito: el import ocurre cuando el módulo se
+ * pide de verdad, así que no hay problemas de orden con el hoisting de vi.mock.
  */
-const databaseUrl = process.env.DATABASE_URL ?? ''
+vi.mock('../src/infrastructure/database/prisma', async () => {
+  const { prismaMock } = await import('./helpers/prisma-mock')
+  return { default: prismaMock }
+})
 
-if (!databaseUrl.includes('test')) {
-  throw new Error(
-    '\n\n' +
-      '   DATABASE_URL no parece apuntar a una base de datos de pruebas.\n' +
-      '   Esta suite borra todas las tablas antes de cada prueba, así que\n' +
-      '   nunca debe correr contra la base compartida del equipo.\n\n' +
-      '   Crea un archivo .env.test (mirando .env.test.example) con una\n' +
-      '   base propia, por ejemplo:\n\n' +
-      '   DATABASE_URL="postgresql://usuario:password@127.0.0.1:5432/celularpro_test"\n\n',
-  )
-}
+/**
+ * bcrypt es un módulo nativo: se compila para el sistema operativo donde se
+ * instaló, así que la suite no correría en otra máquina ni en un pipeline de
+ * integración continua. Se reemplaza por un doble con la misma semántica:
+ * hash() transforma y compare() verifica contra esa transformación.
+ */
+vi.mock('bcrypt', () => {
+  const hash = async (texto: string) => `hash:${texto}`
+  const compare = async (texto: string, hasheado: string) =>
+    hasheado === `hash:${texto}`
+  return { default: { hash, compare }, hash, compare }
+})
 
-// Cierra la conexión de Prisma al terminar cada archivo de prueba. Con
-// isolate:true cada archivo carga su propio cliente Prisma (su propia
-// conexión), así que sin este cierre se podrían acumular conexiones
-// abiertas a medida que corren los 17 archivos.
-afterAll(async () => {
-  const prisma = (await import('../src/infrastructure/database/prisma')).default
-  await prisma.$disconnect()
+// Cada prueba arranca con el doble en blanco, para que lo programado en una
+// no se filtre a la siguiente.
+beforeEach(async () => {
+  const { limpiarPrismaMock } = await import('./helpers/prisma-mock')
+  limpiarPrismaMock()
 })

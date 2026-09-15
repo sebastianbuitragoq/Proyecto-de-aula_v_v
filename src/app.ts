@@ -5,6 +5,10 @@ import routes from './interface/routes'
 
 const app = express()
 
+// Oculta la cabecera "X-Powered-By: Express": deja de anunciar el framework
+// y su versión a cualquiera que mire las respuestas.
+app.disable('x-powered-by')
+
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || '*',

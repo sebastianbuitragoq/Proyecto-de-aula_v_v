@@ -26,6 +26,18 @@ export async function getPhones(
   return repo.findAll(filters, query.page, query.limit)
 }
 
+// findById() + el 404 se repetía igual en getPhoneById, updatePhone y
+// deletePhone. Se exporta porque favoritos necesita la misma guarda antes de
+// marcar un celular, y no tiene sentido tener dos versiones del mismo 404.
+export async function findPhoneByIdOrThrow(
+  repo: IPhoneRepository,
+  id: string,
+) {
+  const phone = await repo.findById(id)
+  if (!phone) throw new AppError('Celular no encontrado', 404)
+  return phone
+}
+
 export async function getPhoneBySlug(repo: IPhoneRepository, slug: string) {
   const phone = await repo.findBySlug(slug)
   if (!phone) throw new AppError('Celular no encontrado', 404)
@@ -33,9 +45,7 @@ export async function getPhoneBySlug(repo: IPhoneRepository, slug: string) {
 }
 
 export async function getPhoneById(repo: IPhoneRepository, id: string) {
-  const phone = await repo.findById(id)
-  if (!phone) throw new AppError('Celular no encontrado', 404)
-  return phone
+  return findPhoneByIdOrThrow(repo, id)
 }
 
 export async function createPhone(
@@ -66,8 +76,7 @@ export async function updatePhone(
   id: string,
   data: UpdatePhoneDto,
 ): Promise<Phone> {
-  const phone = await repo.findById(id)
-  if (!phone) throw new AppError('Celular no encontrado', 404)
+  await findPhoneByIdOrThrow(repo, id)
   return repo.update(id, data)
 }
 
@@ -75,7 +84,6 @@ export async function deletePhone(
   repo: IPhoneRepository,
   id: string,
 ): Promise<void> {
-  const phone = await repo.findById(id)
-  if (!phone) throw new AppError('Celular no encontrado', 404)
+  await findPhoneByIdOrThrow(repo, id)
   return repo.delete(id)
 }

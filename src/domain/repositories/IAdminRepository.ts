@@ -1,3 +1,4 @@
+import type { StockAlert } from '../entities/Alert'
 import type { PublicUser } from '../entities/User'
 
 export interface AdminStats {
@@ -52,4 +53,6 @@ export interface IAdminRepository {
   banUser(userId: string, reason: string): Promise<AdminUser>
   unbanUser(userId: string): Promise<AdminUser>
   changeRole(userId: string, role: 'USER' | 'ADMIN'): Promise<AdminUser>
+  /** Alertas de inventario todavía sin resolver, de la más reciente a la más antigua. */
+  listAlerts(): Promise<StockAlert[]>
 }

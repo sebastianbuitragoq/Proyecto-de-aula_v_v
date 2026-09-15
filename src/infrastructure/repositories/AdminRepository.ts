@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import prisma from '../database/prisma'
 import { AppError } from '../../domain/AppError'
+import type { AlertType, StockAlert } from '../../domain/entities/Alert'
 import type {
   AdminStats,
   AdminUser,
@@ -180,11 +181,19 @@ export class AdminRepository implements IAdminRepository {
     }
   }
 
-  async banUser(userId: string, reason: string): Promise<AdminUser> {
+  // banUser() y unbanUser() eran el mismo bloque (update + include + manejo
+  // de P2025) repetido con solo el `data` distinto. 42.9% de líneas
+  // idénticas (hallazgo del documento de métricas) → un solo método privado.
+  // changeRole() tampoco traducía el P2025 y respondía 500 en vez de 404
+  // ante un id inexistente; ahora pasa por aquí y queda igual que los otros.
+  private async actualizarUsuario(
+    userId: string,
+    data: Prisma.UserUpdateInput,
+  ): Promise<AdminUser> {
     try {
       const user = await prisma.user.update({
         where: { id: userId },
-        data: { banned: true, banReason: reason, bannedAt: new Date() },
+        data,
         include: { _count: { select: { orders: true } } },
       })
       return mapUser(user)
@@ -193,29 +202,52 @@ export class AdminRepository implements IAdminRepository {
         throw new AppError('Usuario no encontrado', 404)
       throw error
     }
+  }
+
+  async banUser(userId: string, reason: string): Promise<AdminUser> {
+    return this.actualizarUsuario(userId, {
+      banned: true,
+      banReason: reason,
+      bannedAt: new Date(),
+    })
   }
 
   async unbanUser(userId: string): Promise<AdminUser> {
-    try {
-      const user = await prisma.user.update({
-        where: { id: userId },
-        data: { banned: false, banReason: null, bannedAt: null },
-        include: { _count: { select: { orders: true } } },
-      })
-      return mapUser(user)
-    } catch (error) {
-      if (usuarioNoExiste(error))
-        throw new AppError('Usuario no encontrado', 404)
-      throw error
-    }
+    return this.actualizarUsuario(userId, {
+      banned: false,
+      banReason: null,
+      bannedAt: null,
+    })
   }
 
   async changeRole(userId: string, role: 'USER' | 'ADMIN'): Promise<AdminUser> {
-    const user = await prisma.user.update({
-      where: { id: userId },
-      data: { role },
-      include: { _count: { select: { orders: true } } },
+    return this.actualizarUsuario(userId, { role })
+  }
+
+  async listAlerts(): Promise<StockAlert[]> {
+    const alerts = await prisma.alert.findMany({
+      where: { isResolved: false },
+      include: {
+        phone: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            stock: true,
+            minStock: true,
+            heroImage: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
     })
-    return mapUser(user)
+
+    // En la base, `type` es un String: Postgres no tiene el enum y Prisma lo
+    // devuelve sin estrechar. El dominio sí lo tiene tipado, así que se
+    // afirma aquí, en el borde, y de ahí para adentro viaja como AlertType.
+    return alerts.map((alert) => ({
+      ...alert,
+      type: alert.type as AlertType,
+    }))
   }
 }

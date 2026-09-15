@@ -1,9 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import request from 'supertest'
 import app from '../../src/app'
-import prisma from '../../src/infrastructure/database/prisma'
-import { limpiarBaseDeDatos } from '../helpers/db'
-import { crearAdminAutenticado, crearUsuarioAutenticado, tokenConFirmaInvalida } from '../helpers/fixtures'
+import { prismaMock } from '../helpers/prisma-mock'
+import {
+  autenticar,
+  autenticarAdmin,
+  tokenConFirmaInvalida,
+} from '../helpers/fixtures'
 
 /**
  * ESC-29 — Panel de estadísticas
@@ -11,45 +14,48 @@ import { crearAdminAutenticado, crearUsuarioAutenticado, tokenConFirmaInvalida }
  *
  * V(G) = 6. Los tres últimos caminos recorren el bucle que suma los ingresos:
  * sin pedidos, con un pedido que sí suma, y con un pedido cancelado que se
- * salta. Contra Postgres real, sin mocks.
- *
- * getStats() solo lee: no hay ningún endpoint que lleve un pedido hasta
- * DELIVERED o CANCELLED de un salto (eso pasa con varias llamadas a
- * updateOrderStatus). Para probar el conteo por estado alcanza con insertar
- * el pedido directamente con el estado ya puesto, así que se hace con Prisma
- * en lugar de recorrer todo el flujo de compra.
+ * salta.
  */
 
 const RUTA = '/api/v1/admin/stats'
 
-function crearPedido(overrides: {
-  status: 'PENDING' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
-  total: number
-  orderRef?: string
-  createdAt?: Date
-}) {
-  const { status, total, orderRef, createdAt } = overrides
-  return prisma.order.create({
-    data: {
-      orderRef: orderRef ?? `CP-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-      email: 'cliente@correo.com',
-      name: 'Cliente de prueba',
-      phone: '+57 300 000 0000',
-      address: 'Calle de prueba',
-      city: 'Bogota',
-      dept: 'Cundinamarca',
-      subtotal: total,
-      shipping: 0,
-      total,
-      status,
-      createdAt,
-    },
-  })
+type Estado = 'PENDING' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
+
+interface PedidoAgrupado {
+  status: Estado
+  count: number
+  sum: number
 }
 
-beforeEach(async () => {
-  await limpiarBaseDeDatos()
-})
+/**
+ * Programa las nueve consultas que hace getStats(), en el mismo orden en que
+ * las lanza el repositorio: los conteos de usuarios y celulares, el groupBy y
+ * el aggregate de pedidos, los 8 pedidos recientes y, por último, los pedidos
+ * de los últimos 7 días que alimentan revenueByDay.
+ */
+function programarEstadisticas(
+  pedidos: PedidoAgrupado[] = [],
+  revenueDelMes = 0,
+) {
+  prismaMock.user.count.mockResolvedValue(0)
+  prismaMock.phone.count.mockResolvedValue(0)
+
+  prismaMock.order.groupBy.mockResolvedValue(
+    pedidos.map((p) => ({
+      status: p.status,
+      _count: { _all: p.count },
+      _sum: { total: p.sum },
+    })),
+  )
+  prismaMock.order.aggregate.mockResolvedValue({
+    _sum: { total: revenueDelMes },
+  })
+
+  // Primera llamada: los pedidos recientes del panel.
+  prismaMock.order.findMany.mockResolvedValueOnce([])
+  // Segunda: los de los últimos 7 días, para el desglose diario.
+  prismaMock.order.findMany.mockResolvedValueOnce([])
+}
 
 describe('ESC-29 — Panel de estadísticas', () => {
   it('Camino 1 (1-2-14): sin cabecera Bearer → 401 Token requerido', async () => {
@@ -57,6 +63,7 @@ describe('ESC-29 — Panel de estadísticas', () => {
 
     expect(res.status).toBe(401)
     expect(res.body.error).toBe('Token requerido')
+    expect(prismaMock.order.groupBy).not.toHaveBeenCalled()
   })
 
   it('Camino 2 (1-3-4-14): firma inválida → 401 Token inválido o expirado', async () => {
@@ -66,31 +73,42 @@ describe('ESC-29 — Panel de estadísticas', () => {
 
     expect(res.status).toBe(401)
     expect(res.body.error).toBe('Token inválido o expirado')
+    expect(prismaMock.order.groupBy).not.toHaveBeenCalled()
   })
 
   it('Camino 3 (1-3-5-6-14): rol USER → 403 Acceso restringido', async () => {
-    const { token } = await crearUsuarioAutenticado()
+    const { token } = autenticar()
 
-    const res = await request(app).get(RUTA).set('Authorization', `Bearer ${token}`)
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
 
     expect(res.status).toBe(403)
     expect(res.body.error).toBe('Acceso restringido a administradores')
+    expect(prismaMock.order.groupBy).not.toHaveBeenCalled()
   })
 
   it('Camino 4 (1-3-5-7-8-9-13-14): sin pedidos → 200 con los ingresos en 0', async () => {
-    const { token } = await crearAdminAutenticado()
+    const { token } = autenticarAdmin()
+    programarEstadisticas([])
 
-    const res = await request(app).get(RUTA).set('Authorization', `Bearer ${token}`)
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
 
     expect(res.status).toBe(200)
     expect(res.body.data.orders).toMatchObject({ total: 0, revenue: 0 })
   })
 
   it('Camino 5 (1-3-5-7-8-9-10-11-9-13-14): pedido no cancelado → suma su total a los ingresos', async () => {
-    const { token } = await crearAdminAutenticado()
-    await crearPedido({ status: 'DELIVERED', total: 3_500_000 })
+    const { token } = autenticarAdmin()
+    programarEstadisticas([
+      { status: 'DELIVERED', count: 1, sum: 3_500_000 },
+    ])
 
-    const res = await request(app).get(RUTA).set('Authorization', `Bearer ${token}`)
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
 
     expect(res.status).toBe(200)
     expect(res.body.data.orders).toMatchObject({
@@ -102,10 +120,14 @@ describe('ESC-29 — Panel de estadísticas', () => {
   })
 
   it('Camino 6 (1-3-5-7-8-9-10-12-9-13-14): pedido cancelado → no se suma a los ingresos', async () => {
-    const { token } = await crearAdminAutenticado()
-    await crearPedido({ status: 'CANCELLED', total: 3_500_000 })
+    const { token } = autenticarAdmin()
+    programarEstadisticas([
+      { status: 'CANCELLED', count: 1, sum: 3_500_000 },
+    ])
 
-    const res = await request(app).get(RUTA).set('Authorization', `Bearer ${token}`)
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
 
     expect(res.status).toBe(200)
     expect(res.body.data.orders).toMatchObject({
@@ -117,15 +139,16 @@ describe('ESC-29 — Panel de estadísticas', () => {
   })
 
   it('Con pedidos mezclados solo suma los que no están cancelados', async () => {
-    const { token } = await crearAdminAutenticado()
-    await crearPedido({ status: 'DELIVERED', total: 2_000_000 })
-    await crearPedido({ status: 'DELIVERED', total: 3_000_000 })
-    await crearPedido({ status: 'PENDING', total: 1_000_000 })
-    await crearPedido({ status: 'CANCELLED', total: 3_000_000 })
-    await crearPedido({ status: 'CANCELLED', total: 3_000_000 })
-    await crearPedido({ status: 'CANCELLED', total: 3_000_000 })
+    const { token } = autenticarAdmin()
+    programarEstadisticas([
+      { status: 'DELIVERED', count: 2, sum: 5_000_000 },
+      { status: 'PENDING', count: 1, sum: 1_000_000 },
+      { status: 'CANCELLED', count: 3, sum: 9_000_000 },
+    ])
 
-    const res = await request(app).get(RUTA).set('Authorization', `Bearer ${token}`)
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
 
     expect(res.status).toBe(200)
     expect(res.body.data.orders).toMatchObject({
@@ -133,16 +156,40 @@ describe('ESC-29 — Panel de estadísticas', () => {
       delivered: 2,
       pending: 1,
       cancelled: 3,
-      revenue: 6_000_000, // 2.000.000 + 3.000.000 + 1.000.000, sin los 9.000.000 cancelados
+      // 5.000.000 + 1.000.000, sin los 9.000.000 cancelados.
+      revenue: 6_000_000,
     })
   })
 
   it('El panel siempre devuelve los 7 días de ingresos', async () => {
-    const { token } = await crearAdminAutenticado()
+    const { token } = autenticarAdmin()
+    programarEstadisticas([])
 
-    const res = await request(app).get(RUTA).set('Authorization', `Bearer ${token}`)
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
 
     expect(res.status).toBe(200)
     expect(res.body.data.revenueByDay).toHaveLength(7)
+  })
+
+  it('Un pedido de hoy aparece en el último día del desglose diario', async () => {
+    const { token } = autenticarAdmin()
+    programarEstadisticas([{ status: 'DELIVERED', count: 1, sum: 800_000 }])
+    // Se reprograman las dos findMany: la segunda devuelve el pedido de hoy.
+    prismaMock.order.findMany.mockReset()
+    prismaMock.order.findMany.mockResolvedValueOnce([])
+    prismaMock.order.findMany.mockResolvedValueOnce([
+      { total: 800_000, createdAt: new Date() },
+    ])
+
+    const res = await request(app)
+      .get(RUTA)
+      .set('Authorization', `Bearer ${token}`)
+
+    expect(res.status).toBe(200)
+    const dias = res.body.data.revenueByDay
+    expect(dias).toHaveLength(7)
+    expect(dias[6]).toMatchObject({ amount: 800_000, count: 1 })
   })
 })

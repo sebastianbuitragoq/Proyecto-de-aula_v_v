@@ -1,126 +1,79 @@
-# Pruebas automatizadas — CelularPro
+# Suite de pruebas — CelularPro API
 
-Toda la suite del equipo vive en esta carpeta. No usa ningún mock: corre
-contra una Postgres real, con bcrypt y jsonwebtoken reales de principio a
-fin. Antes de correrla hay que preparar esa base, una sola vez por máquina.
-
-## 1. Preparar la base de pruebas (una sola vez)
-
-Esta suite borra todas las tablas antes de cada prueba (ver
-`helpers/db.ts`), así que **nunca debe apuntar a la base compartida del
-equipo** (la de `.env`/`.env.example`). Cada integrante necesita su propia
-base, local, solo para los tests:
+257 pruebas en 28 archivos. **No necesita base de datos ni variables de
+entorno**: se sustituye el cliente Prisma por un doble, así que corre igual en
+tu máquina que en el pipeline.
 
 ```bash
-createdb celularpro_test
+npm test              # toda la suite
+npm run test:watch    # en modo watch
+npm run test:coverage # + reporte en coverage/ (incluye lcov.info para SonarQube)
 ```
 
-Copia `.env.test.example` a `.env.test` y pon ahí tu usuario/contraseña:
+## Cómo está montada
 
-```bash
-cp .env.test.example .env.test
-# edita .env.test con tu usuario y contraseña de Postgres
-```
+`tests/setup.ts` se ejecuta antes que cualquier archivo de prueba y hace tres
+cosas:
 
-Aplica las migraciones sobre esa base (no sobre la de desarrollo):
+1. Reemplaza `src/infrastructure/database/prisma` por el doble de
+   `tests/helpers/prisma-mock.ts`.
+2. Reemplaza `bcrypt` (módulo nativo, no portable entre sistemas) por un doble
+   con la misma semántica: `hash()` transforma, `compare()` verifica.
+3. Deja el doble en blanco antes de cada prueba.
 
-```bash
-npx dotenv -e .env.test -- npx prisma migrate deploy
-```
+Lo único simulado es la capa que habla con la base. Rutas, middlewares,
+controladores, casos de uso y repositorios se ejecutan de verdad, que es
+justamente lo que recorren los grafos de flujo. Cada prueba programa el doble
+para forzar el camino que le interesa:
 
-`tests/setup.ts` revisa que `DATABASE_URL` contenga la palabra `"test"` y
-corta la ejecución si no la encuentra, como última protección por si este
-paso se hace mal.
-
-## 2. Correr la suite
-
-```bash
-npm install     # solo la primera vez, o al cambiar de máquina
-npm test
-```
-
-Como todas las pruebas comparten una sola base real, corren una detrás de
-otra (no en paralelo) para que no se pisen entre sí. Por eso la suite tarda
-más que una basada en mocks, pero a cambio prueba código real de punta a
-punta: rutas, middlewares, casos de uso, repositorios y Postgres.
-
-Otros comandos:
-
-```bash
-npm run test:watch                          # se re-ejecuta al guardar
-npm run test:coverage                       # reporte de cobertura
-npm test tests/escenarios                   # solo un grupo
-npm test -- -t "Camino 5"                   # filtrar por nombre
+```ts
+prismaMock.user.update.mockResolvedValue(usuarioConConteo({ banned: true }))
+prismaMock.user.update.mockRejectedValue(errorRegistroNoEncontrado()) // P2025 → 404
 ```
 
 ## Estructura
 
 ```
 tests/
-├── setup.ts                  Revisa DATABASE_URL y cierra Prisma al final de cada archivo
+├── setup.ts                    Dobles globales (Prisma y bcrypt)
 ├── helpers/
-│   ├── db.ts                 limpiarBaseDeDatos(): borra todas las tablas en orden seguro
-│   └── fixtures.ts           crearUsuario, crearCelular, generarToken, etc. — todo con Prisma real
-├── escenarios/               Pruebas de camino básico sobre la API completa
-│   ├── esc-26-banear-usuario.test.ts
-│   ├── esc-27-desbanear-usuario.test.ts
-│   ├── esc-28-consultar-usuarios.test.ts
-│   ├── esc-29-panel-estadisticas.test.ts
-│   └── esc-30-administracion-catalogo.test.ts
-└── unit/                     Pruebas unitarias por caso de uso, middleware y DTO
-    ├── control-roles/
-    ├── gestion-perfil/
-    ├── login/
-    ├── pedidos/
-    ├── registro/
-    └── validacion-credenciales/
+│   ├── prisma-mock.ts          El doble del cliente, un vi.fn() por método
+│   └── fixtures.ts             Filas de prueba, tokens JWT reales y el error P2025
+├── escenarios/                 Pruebas de camino básico sobre la API completa
+│   ├── esc-26-banear-usuario.test.ts          V(G)=7
+│   ├── esc-27-desbanear-usuario.test.ts       V(G)=5
+│   ├── esc-28-consultar-usuarios.test.ts      V(G)=6
+│   ├── esc-29-panel-estadisticas.test.ts      V(G)=6
+│   ├── esc-30-administracion-catalogo.test.ts V(G)=10
+│   ├── esc-31-alertas-stock.test.ts           V(G)=8
+│   ├── esc-32-lista-favoritos.test.ts         V(G)=9
+│   ├── autenticacion.test.ts          register / login / me
+│   ├── pedidos.test.ts                crear, consultar y cambiar estado
+│   ├── catalogo-publico.test.ts       listado, filtros y detalle
+│   ├── ramas-de-error.test.ts         cambio de rol y fallos de infraestructura
+│   └── ramas-restantes.test.ts        estados terminales, CORS y 500 en producción
+└── unit/                       Pruebas por caso de uso, middleware y DTO
+    ├── alertas/ catalogo/ control-roles/ errores/ favoritos/
+    ├── gestion-perfil/ login/ pedidos/ registro/ validacion-credenciales/
 ```
 
-## Los dos niveles de prueba
+## Fixtures
 
-**`escenarios/`** — Un archivo por escenario de prueba documentado. Cada test
-recorre un camino básico del grafo de flujo correspondiente, entrando por la
-ruta HTTP real: pasa por el router, `auth.middleware`, `validate.middleware`,
-el controlador, el caso de uso y el repositorio, hasta llegar a Postgres.
+| Función | Para qué sirve |
+|---|---|
+| `usuario()` / `usuarioConConteo()` | Arma la fila de un usuario (la segunda, con `_count.orders`, como la devuelve el panel) |
+| `celular()` | Fila de un celular con sus relaciones |
+| `autenticar()` / `autenticarAdmin()` | Devuelve `{ user, token }` y además registra al usuario en el doble, porque `auth.middleware` relee su estado en cada request |
+| `generarToken()` / `tokenConFirmaInvalida()` / `tokenExpirado()` | JWT reales, firmados con el mismo secreto que usa el servidor |
+| `errorRegistroNoEncontrado()` | El `PrismaClientKnownRequestError` P2025 real, que es lo que activa el 404 |
+| `bodyCelularValido()` | Body mínimo que aprueba `createPhoneDto` |
+| `alerta()` | Fila de la tabla `Alert` con su celular incluido, como la devuelve `listAlerts()` |
+| `favorito()` | Fila de la tabla `Favorite` con su celular incluido, antes del mapeo al dominio |
+| `ID_INEXISTENTE` | UUID que nunca corresponde a un registro |
 
-El nombre de cada test lleva su camino y la secuencia de nodos, para poder
-contrastarlo directamente contra el diagrama:
+## Cobertura
 
-```
-Camino 5 (1-3-5-7-9-10-14): un admin no puede banearse a sí mismo (RN-05) → 400
-```
-
-**`unit/`** — Pruebas más aisladas: un caso de uso recibiendo el repositorio
-real (`AdminRepository`, `UserRepository`, `OrderRepository`) en vez de
-pasar por HTTP, o un middleware con `req`/`res` armados a mano. Los
-esquemas de Zod (`register.validate-dto.test.ts`, `emailSchema.test.ts`) y
-el middleware `validate` no tocan la base porque no la necesitan: son
-lógica pura.
-
-## Por qué no hay mocks
-
-Antes esta suite reemplazaba el cliente Prisma y `bcrypt` por dobles de
-prueba (`vi.mock()`), lo que la hacía rápida (2-3 segundos) pero probaba un
-comportamiento simulado, no el real: si el repositorio armaba mal una
-consulta, o si `bcrypt`/`jsonwebtoken` se usaban distinto de lo esperado,
-el mock lo disimulaba.
-
-Ahora cada prueba:
-
-1. Limpia la base con `limpiarBaseDeDatos()`.
-2. Inserta filas reales con los helpers de `fixtures.ts` (usuarios con
-   contraseña hasheada de verdad, celulares con su categoría, tokens
-   firmados con el JWT_SECRET real).
-3. Ejerce el código de producción sin ningún atajo.
-4. Verifica el resultado, y en varios casos también el estado que quedó en
-   la base (por ejemplo, que el stock se haya descontado de verdad).
-
-## Verificación de la suite
-
-Ver los tests en verde no prueba nada por sí solo: una prueba mal escrita
-pasa siempre. La versión anterior (con mocks) se verificó rompiendo el
-backend a propósito ocho veces y confirmando que cayeran los tests
-correctos — ver el historial de git para esa tabla. Al pasar a base de
-datos real, conviene repetir ese mismo ejercicio: comentar temporalmente
-una regla de negocio en el backend, correr `npm test`, confirmar que fallan
-exactamente los tests esperados, y restaurar el archivo.
+100% de líneas, ramas y funciones sobre `src/`. Quedan fuera del cálculo
+`src/domain/entities` y `src/domain/repositories` (solo declaran tipos, no
+generan código ejecutable), `src/server.ts` y `src/infrastructure/database`
+(arranque y siembra).

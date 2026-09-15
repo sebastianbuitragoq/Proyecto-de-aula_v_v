@@ -22,6 +22,14 @@ export const createPhoneDto = z.object({
   compareAt: z.number().int().positive().optional(),
   badge: z.string().optional(),
   stock: z.number().int().nonnegative('El stock no puede ser negativo'),
+  // Umbral de reposición. Si no viene, se usa el mismo valor por defecto que
+  // tiene la columna en la base, para que el celular quede siempre con un
+  // mínimo con el que comparar.
+  minStock: z
+    .number()
+    .int()
+    .nonnegative('El stock mínimo no puede ser negativo')
+    .default(5),
   condition: z.enum(['NEW', 'CERTIFIED', 'USED']),
   verified: z.boolean().default(false),
   batteryHealth: z.number().int().min(0).max(100).optional(),

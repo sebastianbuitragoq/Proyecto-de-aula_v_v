@@ -7,6 +7,7 @@ import type {
 } from '../../domain/repositories/IOrderRepository'
 import { AppError } from '../../domain/AppError'
 import prisma from '../database/prisma'
+import { sincronizarAlertas } from './stock-alerts'
 
 function generateOrderRef(): string {
   return 'CP-' + crypto.randomBytes(3).toString('hex').toUpperCase()
@@ -124,6 +125,20 @@ export class OrderRepository implements IOrderRepository {
           const phone = phoneMap.get(item.phoneId)!
           throw new AppError(`Stock insuficiente para "${phone.name}"`, 400)
         }
+      }
+
+      // Alertas de inventario. Se relee el stock ya descontado en vez de
+      // restarlo en memoria: con compras simultáneas el valor final no tiene
+      // por qué ser `stock - qty`, y la alerta debe reflejar lo que quedó de
+      // verdad. Va dentro de la transacción, así que si el pedido se revierte
+      // las alertas que generó se revierten también.
+      const inventario = await tx.phone.findMany({
+        where: { id: { in: phoneIds } },
+        select: { id: true, name: true, stock: true, minStock: true },
+      })
+
+      for (const celular of inventario) {
+        await sincronizarAlertas(tx, celular)
       }
 
       return newOrder

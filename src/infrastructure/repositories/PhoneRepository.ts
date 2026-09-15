@@ -6,18 +6,12 @@ import type {
   PhoneFilters,
 } from '../../domain/repositories/IPhoneRepository'
 import prisma from '../database/prisma'
-
-// Tipo inferido de Prisma con todas las relaciones incluidas
-const phoneInclude = {
-  images: { orderBy: { position: 'asc' as const } },
-  colors: true,
-  features: { orderBy: { position: 'asc' as const } },
-  category: { select: { name: true } },
-} satisfies Prisma.PhoneInclude
-
-type PhoneWithRelations = Prisma.PhoneGetPayload<{
-  include: typeof phoneInclude
-}>
+import {
+  mapToPhone,
+  phoneInclude,
+  type PhoneWithRelations,
+} from './phone-mapper'
+import { sincronizarAlertas } from './stock-alerts'
 
 function buildWhere(filters: PhoneFilters): Prisma.PhoneWhereInput {
   const where: Prisma.PhoneWhereInput = {}
@@ -44,47 +38,26 @@ function buildWhere(filters: PhoneFilters): Prisma.PhoneWhereInput {
   return where
 }
 
-function mapToPhone(raw: PhoneWithRelations): Phone {
-  return {
-    id: raw.id,
-    slug: raw.slug,
-    name: raw.name,
-    brand: raw.brand,
-    categoryId: raw.categoryId,
-    price: raw.price,
-    compareAt: raw.compareAt,
-    badge: raw.badge,
-    stock: raw.stock,
-    condition: raw.condition as Phone['condition'],
-    verified: raw.verified,
-    batteryHealth: raw.batteryHealth,
-    ram: raw.ram,
-    storage: raw.storage,
-    camera: raw.camera,
-    battery: raw.battery,
-    screen: raw.screen,
-    chip: raw.chip,
-    shortDesc: raw.shortDesc,
-    longDesc: raw.longDesc,
-    heroImage: raw.heroImage,
-    images: raw.images.map((img) => ({
-      id: img.id,
-      url: img.url,
-      position: img.position,
-    })),
-    colors: raw.colors.map((c) => ({
-      id: c.id,
-      colorId: c.colorId,
-      name: c.name,
-      hex: c.hex,
-    })),
-    features: raw.features.map((f) => f.feature),
-    createdAt: raw.createdAt,
-    updatedAt: raw.updatedAt,
-  }
-}
-
 export class PhoneRepository implements IPhoneRepository {
+  /**
+   * Traduce la fila y deja sus alertas al día.
+   *
+   * create() y update() son los dos puntos donde un administrador cambia el
+   * inventario a mano (dar de alta un modelo agotado, reponer unidades o
+   * mover el umbral), así que ambos tienen que reevaluar la alerta. La compra
+   * lo hace por su cuenta dentro de su transacción.
+   */
+  private async mapearYSincronizar(raw: PhoneWithRelations): Promise<Phone> {
+    const phone = mapToPhone(raw)
+    await sincronizarAlertas(prisma, {
+      id: phone.id,
+      name: phone.name,
+      stock: phone.stock,
+      minStock: phone.minStock,
+    })
+    return phone
+  }
+
   async findAll(
     filters: PhoneFilters,
     page: number,
@@ -186,7 +159,7 @@ export class PhoneRepository implements IPhoneRepository {
       },
       include: phoneInclude,
     })
-    return mapToPhone(phone)
+    return this.mapearYSincronizar(phone)
   }
 
   async update(
@@ -223,7 +196,7 @@ export class PhoneRepository implements IPhoneRepository {
       },
       include: phoneInclude,
     })
-    return mapToPhone(phone)
+    return this.mapearYSincronizar(phone)
   }
 
   async delete(id: string): Promise<void> {

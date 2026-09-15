@@ -1,9 +1,4 @@
-import { config } from 'dotenv'
 import { defineConfig } from 'vitest/config'
-
-// Carga .env.test (no .env) antes de que arranque cualquier prueba, para que
-// DATABASE_URL apunte a la base de pruebas y no a la compartida del equipo.
-config({ path: '.env.test' })
 
 export default defineConfig({
   test: {
@@ -14,33 +9,41 @@ export default defineConfig({
 
     environment: 'node',
 
-    // Corre la comprobación de seguridad de DATABASE_URL y cierra la
-    // conexión de Prisma al final de cada archivo.
+    // Instala el doble del cliente Prisma y el de bcrypt antes de que
+    // cualquier repositorio los importe, y deja el doble en blanco entre
+    // pruebas. La suite no necesita Postgres ni variables de entorno.
     setupFiles: ['tests/setup.ts'],
 
-    // JWT_SECRET no depende del .env de cada máquina; DATABASE_URL sí, y se
-    // carga arriba desde .env.test.
     env: {
       NODE_ENV: 'test',
       JWT_SECRET: 'secreto-solo-para-pruebas',
     },
 
-    // Todos los archivos comparten la misma base de datos real, así que
-    // corren uno detrás del otro y no en paralelo. Si dos archivos
-    // corrieran a la vez, el beforeEach de uno podría borrar los datos que
-    // el otro acababa de insertar.
-    fileParallelism: false,
-
     // Cada archivo corre en su propio entorno de módulos, así que su propio
-    // cliente Prisma. No hay mocks de módulo que necesiten sobrevivir entre
-    // archivos, pero mantiene los archivos totalmente independientes entre sí.
+    // doble de Prisma: lo que programa un archivo no se filtra a otro.
     isolate: true,
 
     coverage: {
       provider: 'v8',
       reportsDirectory: 'coverage',
       include: ['src/**/*.ts'],
-      exclude: ['src/infrastructure/database/**', 'src/server.ts'],
+      exclude: [
+        // seed.ts y el cliente Prisma: scripts de infraestructura que no
+        // forman parte de la lógica bajo prueba.
+        'src/infrastructure/database/**',
+        'src/server.ts',
+        // Solo declaran tipos e interfaces: al compilar no queda ninguna
+        // línea ejecutable, así que siempre figurarían en 0% por más
+        // pruebas que se escriban.
+        'src/domain/entities/**',
+        'src/domain/repositories/**',
+      ],
+
+      // SonarQube lee coverage/lcov.info (sonar.javascript.lcov.reportPaths).
+      // Sin declarar 'lcov' aquí, Vitest usa sus reporters por defecto
+      // (text, html, clover, json) y ese archivo NUNCA se genera, así que
+      // Sonar no encuentra nada y reporta 0.0% de cobertura.
+      reporter: ['text', 'lcov', 'html'],
     },
   },
 })

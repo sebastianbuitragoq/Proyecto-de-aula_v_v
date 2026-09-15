@@ -1,17 +1,23 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { authenticate } from '../../../src/interface/middlewares/auth.middleware'
-import { limpiarBaseDeDatos } from '../../helpers/db'
-import { crearUsuario, generarToken, ID_INEXISTENTE, tokenConFirmaInvalida } from '../../helpers/fixtures'
+import { prismaMock } from '../../helpers/prisma-mock'
+import {
+  ID_INEXISTENTE,
+  generarToken,
+  tokenConFirmaInvalida,
+  usuario,
+} from '../../helpers/fixtures'
 
 // Basado en: interface/middlewares/auth.middleware.ts — authenticate()
 //
 // El middleware no se queda con lo que dice el token: después de verificar la
 // firma va a la base a releer el estado vigente del usuario. Así, si a alguien
 // lo banean o le bajan el rol, el cambio aplica de inmediato sin esperar a que
-// expire la sesión. jwt.sign/jwt.verify y la consulta a la base son ambos
-// reales: generarToken() firma con el mismo JWT_SECRET que usa el servidor.
+// expire la sesión. jwt.sign/jwt.verify son reales (generarToken() firma con
+// el mismo JWT_SECRET que usa el servidor); lo único sustituido es la lectura
+// de la fila, que es justo lo que cada caso necesita controlar.
 
 function makeRes() {
   const res: Partial<Response> = {}
@@ -19,10 +25,6 @@ function makeRes() {
   res.json = vi.fn().mockReturnValue(res)
   return res as Response
 }
-
-beforeEach(async () => {
-  await limpiarBaseDeDatos()
-})
 
 describe('authenticate middleware', () => {
   // Camino 1,2,3,F — sin header Authorization o sin prefijo Bearer
@@ -84,6 +86,8 @@ describe('authenticate middleware', () => {
     const token = jwt.sign({ id: ID_INEXISTENTE, role: 'USER' }, process.env.JWT_SECRET as string, {
       expiresIn: '1h',
     })
+    prismaMock.user.findUnique.mockResolvedValue(null)
+
     const req = { headers: { authorization: `Bearer ${token}` } } as Request
     const res = makeRes()
     const next = vi.fn() as NextFunction
@@ -96,7 +100,8 @@ describe('authenticate middleware', () => {
 
   // Firma válida, pero la cuenta fue suspendida después de emitir el token
   it('responde 403 con el motivo si la cuenta está baneada', async () => {
-    const user = await crearUsuario({ banned: true, banReason: 'fraude en pagos' })
+    const user = usuario({ banned: true, banReason: 'fraude en pagos' })
+    prismaMock.user.findUnique.mockResolvedValue(user)
     const token = generarToken(user)
 
     const req = { headers: { authorization: `Bearer ${token}` } } as Request
@@ -114,7 +119,8 @@ describe('authenticate middleware', () => {
 
   // Camino 1,2,4,5,6,8,9,F — token válido y cuenta activa
   it('asigna req.user y llama a next() si el token es válido', async () => {
-    const user = await crearUsuario()
+    const user = usuario()
+    prismaMock.user.findUnique.mockResolvedValue(user)
     const token = generarToken(user)
 
     const req = { headers: { authorization: `Bearer ${token}` } } as Request
@@ -131,7 +137,8 @@ describe('authenticate middleware', () => {
   // El rol se toma de la base, no del token: una degradación de ADMIN a USER
   // surte efecto sin esperar a que la sesión expire.
   it('usa el rol vigente en la base y no el que trae el token', async () => {
-    const user = await crearUsuario({ role: 'USER' })
+    const user = usuario({ role: 'USER' })
+    prismaMock.user.findUnique.mockResolvedValue(user)
     // El token quedó firmado como ADMIN antes de que lo degradaran a USER.
     const token = jwt.sign({ id: user.id, role: 'ADMIN' }, process.env.JWT_SECRET as string, {
       expiresIn: '1h',

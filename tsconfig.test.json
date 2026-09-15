@@ -1,0 +1,18 @@
+{
+  // Las pruebas son TypeScript, pero el tsconfig de producción solo incluye
+  // src/ (tiene que hacerlo: rootDir apunta ahí y de ahí sale dist/). Sin
+  // esta configuración nadie revisa los tipos de tests/, y Vitest tampoco:
+  // transpila con esbuild, que borra los tipos sin comprobarlos. Resultado:
+  // una prueba puede quedar desalineada con el dominio —le falta un campo
+  // nuevo de una entidad, por ejemplo— y seguir pasando en verde.
+  //
+  // Esta configuración no emite nada, solo comprueba. La usa `npm run
+  // typecheck` junto con la de producción.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false
+  },
+  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"]
+}

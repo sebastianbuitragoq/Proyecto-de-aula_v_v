@@ -4,6 +4,7 @@ import {
   banUser,
   changeUserRole,
   getStats,
+  listStockAlerts,
   listUsers,
   unbanUser,
 } from '../../application/use-cases/admin.use-cases'
@@ -25,6 +26,15 @@ export async function users(req: Request, res: Response, next: NextFunction) {
     const query = adminUsersQueryDto.parse(req.query)
     const result = await listUsers(repo, query.page, query.limit, query.search)
     res.json(result)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function alerts(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await listStockAlerts(repo)
+    res.json({ data })
   } catch (error) {
     next(error)
   }

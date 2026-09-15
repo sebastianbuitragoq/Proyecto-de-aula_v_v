@@ -1,5 +1,12 @@
 import { Router } from 'express'
-import { ban, changeRole, stats, unban, users } from '../controllers/admin.controller'
+import {
+  alerts,
+  ban,
+  changeRole,
+  stats,
+  unban,
+  users,
+} from '../controllers/admin.controller'
 import { authenticate, requireAdmin } from '../middlewares/auth.middleware'
 import { validate } from '../middlewares/validate.middleware'
 import { banUserDto, changeRoleDto } from '../../application/dtos/admin.dto'
@@ -11,6 +18,7 @@ router.use(authenticate, requireAdmin)
 
 router.get('/stats', stats)
 router.get('/users', users)
+router.get('/alerts', alerts)
 router.put('/users/:id/ban', validate(banUserDto), ban)
 router.put('/users/:id/unban', unban)
 router.put('/users/:id/role', validate(changeRoleDto), changeRole)

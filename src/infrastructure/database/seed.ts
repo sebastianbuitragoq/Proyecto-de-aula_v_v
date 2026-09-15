@@ -1,17 +1,77 @@
 import 'dotenv/config'
 import prisma from './prisma'
+import seedData from './seed-data.json'
+
+// El catálogo vive en seed-data.json: son datos, no lógica. Antes estaban
+// los 9 teléfonos escritos uno por uno dentro de este archivo, repitiendo
+// las mismas 21 claves y el mismo bloque de imágenes/colores/features cada
+// vez (lo que SonarQube marcaba como duplicación). Aquí solo queda el
+// armado, que se escribe una sola vez y sirve para todos.
+
+type Condition = 'NEW' | 'CERTIFIED' | 'USED'
+
+type PhoneSeed = {
+  slug: string
+  name: string
+  brand: string
+  categoryId: string
+  price: number
+  compareAt: number
+  badge: string | null
+  stock: number
+  condition: string
+  verified?: boolean
+  batteryHealth?: number
+  ram: string
+  storage: string
+  camera: string
+  battery: string
+  screen: string
+  chip: string
+  shortDesc: string
+  longDesc: string
+  heroImage: string
+  gallery: string[]
+  heroFirst?: boolean
+  colors: { colorId: string; name: string; hex: string }[]
+  features: string[]
+}
+
+// La hero se declara una sola vez y su posición dentro de la galería sale
+// de heroFirst; los índices de images y features salen del arreglo.
+function toPrismaPhone({
+  gallery,
+  heroFirst,
+  colors,
+  features,
+  condition,
+  ...phone
+}: PhoneSeed) {
+  const urls = heroFirst
+    ? [phone.heroImage, ...gallery]
+    : [...gallery, phone.heroImage]
+
+  return {
+    ...phone,
+    condition: condition as Condition,
+    verified: phone.verified ?? true,
+    images: {
+      createMany: { data: urls.map((url, position) => ({ url, position })) },
+    },
+    colors: { createMany: { data: colors } },
+    features: {
+      createMany: {
+        data: features.map((feature, position) => ({ feature, position })),
+      },
+    },
+  }
+}
 
 async function seed() {
   console.log('Sembrando datos iniciales...')
 
-  // Categorías
   await prisma.category.createMany({
-    data: [
-      { id: 'apple', name: 'iPhone', tagline: 'El estándar de referencia.' },
-      { id: 'samsung', name: 'Samsung', tagline: 'Innovación en cada píxel.' },
-      { id: 'xiaomi', name: 'Xiaomi', tagline: 'Potencia sin concesiones.' },
-      { id: 'motorola', name: 'Motorola', tagline: 'Diseñado para durar.' },
-    ],
+    data: seedData.categories,
     skipDuplicates: true,
   })
 
@@ -29,292 +89,6 @@ async function seed() {
     },
   })
 
-  // Catálogo de teléfonos con imágenes de alta calidad
-  const phones = [
-    {
-      slug: 'iphone-15-pro-max',
-      name: 'iPhone 15 Pro Max',
-      brand: 'Apple',
-      categoryId: 'apple',
-      price: 1299000,
-      compareAt: 1499000,
-      badge: 'Nuevo',
-      stock: 15,
-      condition: 'NEW' as const,
-      verified: true,
-      ram: '8GB',
-      storage: '512GB',
-      camera: '48MP + 12MP + 12MP',
-      battery: '4685 mAh',
-      screen: '6.7" Super Retina XDR',
-      chip: 'A17 Pro',
-      shortDesc: 'Último modelo con cámara avanzada y procesador potente',
-      longDesc: 'El iPhone 15 Pro Max ofrece el mejor desempeño y captura fotográfica profesional con su triple sistema de cámara.',
-      heroImage: 'https://images.unsplash.com/photo-1710023038502-ba80a70a9f53?auto=format&fit=crop&w=800&q=85&fm=webp',
-      images: [
-        { url: 'https://plus.unsplash.com/premium_photo-1681396658834-b56190480934?auto=format&fit=crop&w=800&q=85&fm=webp', position: 0 },
-        { url: 'https://images.unsplash.com/photo-1700805732158-6f1169780ca7?auto=format&fit=crop&w=800&q=85&fm=webp', position: 1 },
-        { url: 'https://images.unsplash.com/photo-1710023038502-ba80a70a9f53?auto=format&fit=crop&w=800&q=85&fm=webp', position: 2 },
-      ],
-      colors: [
-        { colorId: 'c1', name: 'Negro', hex: '#000000' },
-        { colorId: 'c2', name: 'Oro', hex: '#FFD700' },
-        { colorId: 'c3', name: 'Plata', hex: '#C0C0C0' },
-      ],
-      features: ['Face ID', 'Carga rápida 35W', 'Acero inoxidable', 'IP68'],
-    },
-    {
-      slug: 'iphone-14',
-      name: 'iPhone 14',
-      brand: 'Apple',
-      categoryId: 'apple',
-      price: 799000,
-      compareAt: 999000,
-      badge: 'Descuento',
-      stock: 8,
-      condition: 'CERTIFIED' as const,
-      verified: true,
-      batteryHealth: 95,
-      ram: '6GB',
-      storage: '256GB',
-      camera: '12MP + 12MP',
-      battery: '3279 mAh',
-      screen: '6.1" Super Retina XDR',
-      chip: 'A15 Bionic',
-      shortDesc: 'Generación anterior certificada, excelente relación precio-desempeño',
-      longDesc: 'iPhone 14 certificado con garantía de calidad. Potencia similar a Pro con mejor precio.',
-      heroImage: 'https://images.unsplash.com/photo-1510557880182-3d4d3cba35a5?auto=format&fit=crop&w=800&q=85',
-      images: [
-        { url: 'https://plus.unsplash.com/premium_photo-1680985551009-05107cd2752c?auto=format&fit=crop&w=800&q=85', position: 0 },
-        { url: 'https://images.unsplash.com/photo-1726587912121-ea21fcc57ff8?auto=format&fit=crop&w=800&q=85', position: 1 },
-        { url: 'https://images.unsplash.com/photo-1510557880182-3d4d3cba35a5?auto=format&fit=crop&w=800&q=85', position: 2 },
-      ],
-      colors: [
-        { colorId: 'c1', name: 'Púrpura', hex: '#800080' },
-        { colorId: 'c2', name: 'Negro', hex: '#000000' },
-      ],
-      features: ['Face ID', 'Notch más pequeño', 'Fotograma acero', 'IP54'],
-    },
-    {
-      slug: 'samsung-galaxy-s24-ultra',
-      name: 'Samsung Galaxy S24 Ultra',
-      brand: 'Samsung',
-      categoryId: 'samsung',
-      price: 1249000,
-      compareAt: 1449000,
-      badge: 'Nuevo',
-      stock: 12,
-      condition: 'NEW' as const,
-      verified: true,
-      ram: '12GB',
-      storage: '512GB',
-      camera: '200MP + 50MP + 12MP + 10MP',
-      battery: '5000 mAh',
-      screen: '6.8" AMOLED 120Hz',
-      chip: 'Snapdragon 8 Gen 3',
-      shortDesc: 'Campeón en fotografía con cámara de 200MP y AI integrada',
-      longDesc: 'Galaxy S24 Ultra con la mejor cámara del mercado, procesamiento AI avanzado y pantalla AMOLED 120Hz.',
-      heroImage: 'https://images.unsplash.com/photo-1709744722656-9b850470293f?auto=format&fit=crop&w=800&q=85',
-      images: [
-        { url: 'https://images.unsplash.com/photo-1705585174953-9b2aa8afc174?auto=format&fit=crop&w=800&q=85', position: 0 },
-        { url: 'https://images.unsplash.com/photo-1705530292519-ec81f2ace70d?auto=format&fit=crop&w=800&q=85', position: 1 },
-        { url: 'https://images.unsplash.com/photo-1709744722656-9b850470293f?auto=format&fit=crop&w=800&q=85', position: 2 },
-      ],
-      colors: [
-        { colorId: 's1', name: 'Gris Titán', hex: '#808080' },
-        { colorId: 's2', name: 'Negro Fantasma', hex: '#1a1a1a' },
-      ],
-      features: ['Pantalla 6.8" 120Hz', 'S Pen integrado', 'Carga rápida 45W', 'IP68'],
-    },
-    {
-      slug: 'samsung-galaxy-a54',
-      name: 'Samsung Galaxy A54',
-      brand: 'Samsung',
-      categoryId: 'samsung',
-      price: 399000,
-      compareAt: 499000,
-      badge: null,
-      stock: 20,
-      condition: 'NEW' as const,
-      verified: true,
-      ram: '6GB',
-      storage: '128GB',
-      camera: '50MP + 12MP + 5MP',
-      battery: '5000 mAh',
-      screen: '6.4" AMOLED 90Hz',
-      chip: 'Exynos 1280',
-      shortDesc: 'Gama media confiable con gran batería y cámara versátil',
-      longDesc: 'Galaxy A54 perfecto para uso diario con batería que dura todo el día y cámara de calidad.',
-      heroImage: 'https://carulla.vtexassets.com/arquivos/ids/19798217/celular-samsung-galaxy-a54-5g-256gb-blanco-reacondicionado.jpg?v=638762945112100000',
-      images: [
-        { url: 'https://images.unsplash.com/photo-1772182137994-4158ac33bddd?auto=format&fit=crop&w=800&q=85', position: 0 },
-        { url: 'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=800&q=85', position: 1 },
-        { url: 'https://carulla.vtexassets.com/arquivos/ids/19798217/celular-samsung-galaxy-a54-5g-256gb-blanco-reacondicionado.jpg?v=638762945112100000', position: 2 },
-      ],
-      colors: [
-        { colorId: 'a1', name: 'Verde', hex: '#008000' },
-        { colorId: 'a2', name: 'Blanco', hex: '#FFFFFF' },
-      ],
-      features: ['Pantalla 6.4" 90Hz', 'Gran batería 5000mAh', 'IP67', 'Carga rápida 25W'],
-    },
-    {
-      slug: 'xiaomi-14-ultra',
-      name: 'Xiaomi 14 Ultra',
-      brand: 'Xiaomi',
-      categoryId: 'xiaomi',
-      price: 799000,
-      compareAt: 999000,
-      badge: 'Potencia',
-      stock: 10,
-      condition: 'NEW' as const,
-      verified: true,
-      ram: '16GB',
-      storage: '512GB',
-      camera: '50MP + 50MP + 50MP + 50MP',
-      battery: '5000 mAh',
-      screen: '6.73" AMOLED 120Hz',
-      chip: 'Snapdragon 8 Gen 3',
-      shortDesc: 'Potencia absoluta con cuádruple cámara 50MP y procesador flagship',
-      longDesc: 'Xiaomi 14 Ultra con procesador tope de gama, 16GB RAM y cámaras todas 50MP. Relación precio-potencia imbatible.',
-      heroImage: 'https://i02.appmifile.com/334_operator_sg/22/02/2024/d36105f6de5a716a1c0737352c2827be.png?f=webp',
-      images: [
-        { url: 'https://agaval.vtexassets.com/arquivos/ids/2734153-1200-1200?v=638870604974800000&width=1200&height=1200&aspect=true', position: 0 },
-        { url: 'https://www.tuexperto.com/wp-content/uploads/2024/04/asi-han-sido-mis-primeras-48-horas-con-el-xiaomi-14-ultra-en-las-manos-1080x675.jpg.webp', position: 1 },
-        { url: 'https://i02.appmifile.com/334_operator_sg/22/02/2024/d36105f6de5a716a1c0737352c2827be.png?f=webp', position: 2 },
-      ],
-      colors: [
-        { colorId: 'x1', name: 'Negro Azabache', hex: '#0a0e27' },
-        { colorId: 'x2', name: 'Blanco Polar', hex: '#f0f0f0' },
-      ],
-      features: ['Pantalla 6.73" 120Hz', 'Carga rápida 90W', 'IP68', 'Batería 5000mAh'],
-    },
-    {
-      slug: 'xiaomi-13',
-      name: 'Xiaomi 13',
-      brand: 'Xiaomi',
-      categoryId: 'xiaomi',
-      price: 499000,
-      compareAt: 699000,
-      badge: null,
-      stock: 18,
-      condition: 'CERTIFIED' as const,
-      verified: true,
-      batteryHealth: 90,
-      ram: '8GB',
-      storage: '256GB',
-      camera: '50MP + 12MP + 12MP',
-      battery: '4500 mAh',
-      screen: '6.36" AMOLED 120Hz',
-      chip: 'Snapdragon 8 Gen 2',
-      shortDesc: 'Generación anterior certificada, relación calidad-precio excelente',
-      longDesc: 'Xiaomi 13 certificado con batería en excelente estado. Buena opción si buscas ahorrar.',
-      heroImage: 'https://exitocol.vtexassets.com/arquivos/ids/24428311/celular-xiaomi-redmi-note-13-4g-256gb-8ram-108mp-verde.jpg?v=638608926094700000',
-      images: [
-        { url: 'https://http2.mlstatic.com/D_NQ_NP_2X_951197-MLA99998127015_112025-F.webp', position: 0 },
-        { url: 'https://puntoscolombia.vtexassets.com/arquivos/ids/27922311-1200-auto?v=638603644553370000&width=1200&height=auto&aspect=true', position: 1 },
-        { url: 'https://exitocol.vtexassets.com/arquivos/ids/24428311/celular-xiaomi-redmi-note-13-4g-256gb-8ram-108mp-verde.jpg?v=638608926094700000', position: 2 },
-      ],
-      colors: [
-        { colorId: 'x3', name: 'Azul', hex: '#0000FF' },
-        { colorId: 'x4', name: 'Verde', hex: '#00AA00' },
-      ],
-      features: ['Pantalla 6.36" AMOLED 120Hz', 'Carga rápida 67W', 'IP53', 'Batería 4500mAh'],
-    },
-    {
-      slug: 'motorola-edge-50-pro',
-      name: 'Motorola Edge 50 Pro',
-      brand: 'Motorola',
-      categoryId: 'motorola',
-      price: 699000,
-      compareAt: 899000,
-      badge: 'Diseño',
-      stock: 14,
-      condition: 'NEW' as const,
-      verified: true,
-      ram: '12GB',
-      storage: '256GB',
-      camera: '50MP + 12MP + 12MP',
-      battery: '4500 mAh',
-      screen: '6.7" AMOLED 144Hz',
-      chip: 'Snapdragon 8 Gen 3 Leading Version',
-      shortDesc: 'Pantalla 144Hz más suave del mercado con diseño premium',
-      longDesc: 'Motorola Edge 50 Pro con la pantalla más suave (144Hz) y diseño robusto. Potencia y fluidez garantizadas.',
-      heroImage: 'https://celulibre.com/97-large_default/motorola-moto-edge-50-pro-512-gb.jpg',
-      images: [
-        { url: 'https://celulibre.com/97-large_default/motorola-moto-edge-50-pro-512-gb.jpg', position: 0 },
-        { url: 'https://celulibre.com/99-large_default/motorola-moto-edge-50-pro-512-gb.jpg', position: 1 },
-        { url: 'https://celulibre.com/100-large_default/motorola-moto-edge-50-pro-512-gb.jpg', position: 2 },
-      ],
-      colors: [
-        { colorId: 'm1', name: 'Esmeralda', hex: '#50C878' },
-        { colorId: 'm2', name: 'Plata', hex: '#C0C0C0' },
-      ],
-      features: ['Pantalla 6.7" 144Hz', 'Cámara Hasselblad', 'Carga rápida 125W', 'IP68'],
-    },
-    {
-      slug: 'motorola-g84',
-      name: 'Motorola G84',
-      brand: 'Motorola',
-      categoryId: 'motorola',
-      price: 299000,
-      compareAt: 399000,
-      badge: 'Económico',
-      stock: 25,
-      condition: 'NEW' as const,
-      verified: true,
-      ram: '4GB',
-      storage: '128GB',
-      camera: '50MP + 8MP',
-      battery: '5000 mAh',
-      screen: '6.55" IPS 120Hz',
-      chip: 'MediaTek Helio G100',
-      shortDesc: 'Presupuesto inteligente: batería grande y rendimiento decente',
-      longDesc: 'Motorola G84 para presupuesto ajustado. Batería de 5000mAh y desempeño suficiente para tareas diarias.',
-      heroImage: 'https://carulla.vtexassets.com/arquivos/ids/24976611/Celular-MOTOROLA-Edge-50-Fusion-512GB-512-GB-12-GB-RAM-Rosado-3650440_a.jpg?v=639122907635900000',
-      images: [
-        { url: 'https://agaval.vtexassets.com/arquivos/ids/3037332-1200-1200?v=638972832015170000&width=1200&height=1200&aspect=true', position: 0 },
-        { url: 'https://cdn.mos.cms.futurecdn.net/R7M5bMaTJbcGBUGXiUeskd-1024-80.jpg.webp', position: 1 },
-        { url: 'https://carulla.vtexassets.com/arquivos/ids/24976611/Celular-MOTOROLA-Edge-50-Fusion-512GB-512-GB-12-GB-RAM-Rosado-3650440_a.jpg?v=639122907635900000', position: 2 },
-      ],
-      colors: [
-        { colorId: 'm3', name: 'Gris', hex: '#808080' },
-        { colorId: 'm4', name: 'Azul', hex: '#0000FF' },
-      ],
-      features: ['Pantalla 6.55" 120Hz', 'Batería 5000mAh', 'Carga rápida 33W', 'IP54'],
-    },
-    {
-      slug: 'iphone-13-usado',
-      name: 'iPhone 13 (Usado)',
-      brand: 'Apple',
-      categoryId: 'apple',
-      price: 549000,
-      compareAt: 799000,
-      badge: 'Usado',
-      stock: 5,
-      condition: 'USED' as const,
-      verified: true,
-      batteryHealth: 85,
-      ram: '4GB',
-      storage: '128GB',
-      camera: '12MP + 12MP',
-      battery: '3240 mAh',
-      screen: '6.1" Super Retina XDR',
-      chip: 'A15 Bionic',
-      shortDesc: 'Excelente oportunidad: iPhone 13 usado en buen estado',
-      longDesc: 'iPhone 13 de segunda mano con salud de batería 85%. Funciona perfectamente y tiene buen estado físico.',
-      heroImage: 'https://images.unsplash.com/photo-1592286927505-1def25115558?w=800&q=85',
-      images: [
-        { url: 'https://images.unsplash.com/photo-1592286927505-1def25115558?w=800&q=85', position: 0 },
-        { url: 'https://images.unsplash.com/photo-1575283141207-f45d7851a910?w=800&q=85', position: 1 },
-        { url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&q=85', position: 2 },
-      ],
-      colors: [
-        { colorId: 'c4', name: 'Azul', hex: '#0000FF' },
-      ],
-      features: ['Face ID', 'Pantalla 6.1"', 'Acero inoxidable', 'IP67'],
-    },
-  ]
-
   // Limpiar teléfonos anteriores para recargar con imágenes nuevas
   await prisma.phoneFeature.deleteMany({})
   await prisma.phoneColor.deleteMany({})
@@ -322,27 +96,13 @@ async function seed() {
   await prisma.orderItem.deleteMany({})
   await prisma.phone.deleteMany({})
 
-  for (const phone of phones) {
-    const { images, colors, features, ...phoneData } = phone
-    await prisma.phone.create({
-      data: {
-        ...phoneData,
-        images: {
-          createMany: { data: images },
-        },
-        colors: {
-          createMany: { data: colors },
-        },
-        features: {
-          createMany: { data: features.map((f, i) => ({ feature: f, position: i })) },
-        },
-      },
-    })
+  for (const phone of seedData.phones as PhoneSeed[]) {
+    await prisma.phone.create({ data: toPrismaPhone(phone) })
   }
 
   console.log('✓ Datos iniciales listos')
   console.log(`  Admin: admin@celularpro.co / admin1234`)
-  console.log(`  ${phones.length} teléfonos con imágenes de alta calidad`)
+  console.log(`  ${seedData.phones.length} teléfonos con imágenes de alta calidad`)
   console.log('  Todas las imágenes: 3 por producto, 800px ancho optimizado')
 }
 

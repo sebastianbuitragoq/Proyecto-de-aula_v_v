@@ -1,14 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import request from 'supertest'
 import app from '../../src/app'
-import { limpiarBaseDeDatos } from '../helpers/db'
+import { prismaMock } from '../helpers/prisma-mock'
 import {
   ID_INEXISTENTE,
+  autenticar,
+  autenticarAdmin,
   bodyCelularValido,
-  crearAdminAutenticado,
-  crearCategoria,
-  crearCelular,
-  crearUsuarioAutenticado,
+  celular,
   tokenConFirmaInvalida,
 } from '../helpers/fixtures'
 
@@ -17,17 +16,10 @@ import {
  * POST / PUT / DELETE /api/v1/phones
  *
  * V(G) = 10. El nodo 7 del grafo bifurca según el método HTTP, por eso los
- * caminos 4 a 10 se agrupan en POST, PUT y DELETE. Contra Postgres real,
- * sin mocks.
+ * caminos 4 a 10 se agrupan en POST, PUT y DELETE.
  */
 
 const RUTA = '/api/v1/phones'
-
-beforeEach(async () => {
-  await limpiarBaseDeDatos()
-  // bodyCelularValido() usa la categoría "samsung" por defecto.
-  await crearCategoria('samsung')
-})
 
 describe('ESC-30 — Administración del catálogo', () => {
   it('Camino 1 (1-2-19): sin cabecera Bearer → 401 Token requerido', async () => {
@@ -35,6 +27,7 @@ describe('ESC-30 — Administración del catálogo', () => {
 
     expect(res.status).toBe(401)
     expect(res.body.error).toBe('Token requerido')
+    expect(prismaMock.phone.create).not.toHaveBeenCalled()
   })
 
   it('Camino 2 (1-3-4-19): firma inválida → 401 Token inválido o expirado', async () => {
@@ -45,10 +38,11 @@ describe('ESC-30 — Administración del catálogo', () => {
 
     expect(res.status).toBe(401)
     expect(res.body.error).toBe('Token inválido o expirado')
+    expect(prismaMock.phone.create).not.toHaveBeenCalled()
   })
 
   it('Camino 3 (1-3-5-6-19): rol USER → 403 Acceso restringido', async () => {
-    const { token } = await crearUsuarioAutenticado()
+    const { token } = autenticar()
 
     const res = await request(app)
       .post(RUTA)
@@ -57,10 +51,11 @@ describe('ESC-30 — Administración del catálogo', () => {
 
     expect(res.status).toBe(403)
     expect(res.body.error).toBe('Acceso restringido a administradores')
+    expect(prismaMock.phone.create).not.toHaveBeenCalled()
   })
 
   it('Camino 4 (1-3-5-7-8-9-19): POST con body inválido → 400 Datos inválidos', async () => {
-    const { token } = await crearAdminAutenticado()
+    const { token } = autenticarAdmin()
 
     // Falta `condition` y el precio es negativo.
     const res = await request(app)
@@ -70,11 +65,13 @@ describe('ESC-30 — Administración del catálogo', () => {
 
     expect(res.status).toBe(400)
     expect(res.body.error).toBe('Datos inválidos')
+    expect(prismaMock.phone.create).not.toHaveBeenCalled()
   })
 
   it('Camino 5 (1-3-5-7-8-10-11-19): POST con un slug repetido (RN-01) → 409 Ya existe un celular con ese slug', async () => {
-    const { token } = await crearAdminAutenticado()
-    const existente = await crearCelular({ slug: 'iphone-15-prueba' })
+    const { token } = autenticarAdmin()
+    const existente = celular({ slug: 'iphone-15-prueba' })
+    prismaMock.phone.findUnique.mockResolvedValue(existente)
 
     const res = await request(app)
       .post(RUTA)
@@ -86,11 +83,17 @@ describe('ESC-30 — Administración del catálogo', () => {
     expect(res.status).toBe(409)
     expect(res.body.error).toBe('Ya existe un celular con ese slug')
     expect(res.body).not.toHaveProperty('detail')
+    expect(prismaMock.phone.create).not.toHaveBeenCalled()
   })
 
   it('Camino 6 (1-3-5-7-8-10-12-19): POST con body válido y slug libre → 201 celular creado', async () => {
-    const { token } = await crearAdminAutenticado()
+    const { token } = autenticarAdmin()
     const body = bodyCelularValido()
+    // El slug está libre: la búsqueda previa no encuentra nada.
+    prismaMock.phone.findUnique.mockResolvedValue(null)
+    prismaMock.phone.create.mockResolvedValue(
+      celular({ slug: body.slug, name: body.name }),
+    )
 
     const res = await request(app)
       .post(RUTA)
@@ -102,7 +105,8 @@ describe('ESC-30 — Administración del catálogo', () => {
   })
 
   it('Camino 7 (1-3-5-7-13-14-19): PUT sobre un id que no existe → 404 Celular no encontrado', async () => {
-    const { token } = await crearAdminAutenticado()
+    const { token } = autenticarAdmin()
+    prismaMock.phone.findUnique.mockResolvedValue(null)
 
     const res = await request(app)
       .put(`${RUTA}/${ID_INEXISTENTE}`)
@@ -111,14 +115,20 @@ describe('ESC-30 — Administración del catálogo', () => {
 
     expect(res.status).toBe(404)
     expect(res.body.error).toBe('Celular no encontrado')
+    expect(prismaMock.phone.update).not.toHaveBeenCalled()
   })
 
   it('Camino 8 (1-3-5-7-13-15-19): PUT sobre un celular existente → 200 actualizado', async () => {
-    const { token } = await crearAdminAutenticado()
-    const celular = await crearCelular()
+    const { token } = autenticarAdmin()
+    const existente = celular()
+    prismaMock.phone.findUnique.mockResolvedValue(existente)
+    prismaMock.phone.update.mockResolvedValue({
+      ...existente,
+      price: 2_000_000,
+    })
 
     const res = await request(app)
-      .put(`${RUTA}/${celular.id}`)
+      .put(`${RUTA}/${existente.id}`)
       .set('Authorization', `Bearer ${token}`)
       .send({ price: 2_000_000 })
 
@@ -127,7 +137,8 @@ describe('ESC-30 — Administración del catálogo', () => {
   })
 
   it('Camino 9 (1-3-5-7-16-17-19): DELETE sobre un id que no existe → 404 Celular no encontrado', async () => {
-    const { token } = await crearAdminAutenticado()
+    const { token } = autenticarAdmin()
+    prismaMock.phone.findUnique.mockResolvedValue(null)
 
     const res = await request(app)
       .delete(`${RUTA}/${ID_INEXISTENTE}`)
@@ -135,16 +146,22 @@ describe('ESC-30 — Administración del catálogo', () => {
 
     expect(res.status).toBe(404)
     expect(res.body.error).toBe('Celular no encontrado')
+    expect(prismaMock.phone.delete).not.toHaveBeenCalled()
   })
 
   it('Camino 10 (1-3-5-7-16-18-19): DELETE sobre un celular existente → 204 sin contenido', async () => {
-    const { token } = await crearAdminAutenticado()
-    const celular = await crearCelular()
+    const { token } = autenticarAdmin()
+    const existente = celular()
+    prismaMock.phone.findUnique.mockResolvedValue(existente)
+    prismaMock.phone.delete.mockResolvedValue(existente)
 
     const res = await request(app)
-      .delete(`${RUTA}/${celular.id}`)
+      .delete(`${RUTA}/${existente.id}`)
       .set('Authorization', `Bearer ${token}`)
 
+    expect(prismaMock.phone.delete).toHaveBeenCalledWith({
+      where: { id: existente.id },
+    })
     expect(res.status).toBe(204)
     expect(res.body).toEqual({})
   })

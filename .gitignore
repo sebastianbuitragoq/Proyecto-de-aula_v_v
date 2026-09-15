@@ -8,5 +8,8 @@ coverage
 .DS_Store
 .claude/
 
+# Carpeta de trabajo que deja el escáner de SonarQube
+.scannerwork/
+
 # Credenciales de los roles de base de datos del equipo — NUNCA subir
 team-credentials.txt

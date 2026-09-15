@@ -23,6 +23,8 @@ export interface Phone {
   compareAt: number | null
   badge: string | null
   stock: number
+  /** Umbral de reposición: al llegar o bajar de aquí se levanta una alerta. */
+  minStock: number
   condition: Condition
   verified: boolean
   batteryHealth: number | null
